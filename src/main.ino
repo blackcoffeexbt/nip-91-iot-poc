@@ -20,6 +20,8 @@
 
 #include <ArduinoJson.h>
 
+#include "sensor.h"
+
 
 #define PARAM_FILE "/elements.json"
 
@@ -42,6 +44,9 @@ NostrRequestOptions* eventRequestOptions;
 
 bool hasSentEvent = false;
 
+char const *nsecHex = "bdd19cecd942ed8964c2e0ddc92d5e09838d3a09ebb230d974868be00886704b"; // sender private key in hex e.g. bdd19cecdXXXXXXXXXXXXXXXXXXXXXXXXXX
+char const *npubHex = "d0bfc94bd4324f7df2a7601c4177209828047c4d3904d64009a3c67fb5d5e7ca"; // sender public key in hex e.g. d0bfc94bd4324f7df2a7601c4177209828047c4d3904d64009a3c67fb5d5e7ca
+
 extern char npubHexString[80];
 extern char relayString[80];
 
@@ -53,7 +58,7 @@ void configureAccessPoint();
 void initWiFi();
 bool whileCP(void);
 unsigned long getUnixTimestamp();
-void noteEvent(const std::string& key, const char* payload);
+// void noteEvent(const std::string& key, const char* payload);
 void okEvent(const std::string& key, const char* payload);
 void nip01Event(const std::string& key, const char* payload);
 void relayConnectedEvent(const std::string& key, const std::string& message);
@@ -87,9 +92,9 @@ void connectToNostrRelays() {
 
   // split relayString by comma into vector
   std::vector<String> relays;
-  String relayStringCopy = String(relayString);
-  int commaIndex = relayStringCopy.indexOf(",");
-  relays.push_back("nostr.mom");
+  // String relayStringCopy = String(relayString);
+  // int commaIndex = relayStringCopy.indexOf(",");
+  relays.push_back("nos.lol");
 
   // no need to convert to char* anymore
   nostr.setLogging(true);
@@ -101,20 +106,19 @@ void connectToNostrRelays() {
   nostrRelayManager.setEventCallback("ok", okEvent);
   nostrRelayManager.setEventCallback("connected", relayConnectedEvent);
   nostrRelayManager.setEventCallback("disconnected", relayDisonnectedEvent);
-  nostrRelayManager.setEventCallback(1, noteEvent);
+  // nostrRelayManager.setEventCallback(1, noteEvent);
 
   Serial.println("connecting");
   nostrRelayManager.connect();
 }
 
+// Function that gets current epoch time
 unsigned long getUnixTimestamp() {
   time_t now;
   struct tm timeinfo;
-  if(!getLocalTime(&timeinfo)){
-    Serial.println("Failed to obtain time");
-    return 0;
-  } else {
-    Serial.println("Got timestamp of " + String(now));
+  if (!getLocalTime(&timeinfo)) {
+    //Serial.println("Failed to obtain time");
+    return(0);
   }
   time(&now);
   return now;
@@ -189,16 +193,43 @@ void setup() {
   WiFi.onEvent(WiFiEvent);
   init_WifiManager();
 
-  // createNoteEventRequest();
-
   if(hasInternetConnection) {
   Serial.println("Has internet connection. Connectring to relays");
   connectToNostrRelays();
   }
 
+  const char* ntpServer = "uk.pool.ntp.org";
+  long gmtOffset_sec = 0;
+  long daylightOffset_sec = 0;
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  // get the sensor data, create the event and push it to the queue
+  unsigned long timestamp = getUnixTimestamp();
+  float temperature = simulateTemperature(timestamp);
+
+  StaticJsonDocument<512> tagsDoc;
+  JsonArray tags = tagsDoc.to<JsonArray>();
+
+  // Add device tag
+  JsonArray deviceTag = tags.createNestedArray();
+  deviceTag.add("device");
+  deviceTag.add("1337107");
+
+  // Add alt tag
+  JsonArray altTag = tags.createNestedArray();
+  altTag.add("alt");
+  altTag.add("Temperature is " + String(temperature) + "°C");
+
+  String noteString = nostr.getNote(nsecHex, npubHex, timestamp, String(temperature), 8003, tags);
+  // String noteString = nostr.getNote(nsecHex, npubHex, timestamp, "TESTING BACKWARDS COMPATIBILITY");
+  nostrRelayManager.enqueueMessage(noteString.c_str());
+
+  // enqueue it
+  nostrQueue.enqueue(noteString.c_str());
 }
 
-bool lastInternetConnectionCheckTime = 0;
+long lastInternetConnectionCheckTime = 0;
+long firstLoopTime = 0;
 
 void loop() {
   if (millis() - lastInternetConnectionCheckTime > 10000) {
@@ -220,5 +251,15 @@ void loop() {
 
   nostrRelayManager.loop();
   nostrRelayManager.broadcastEvents();
+
+  if(firstLoopTime == 0) {
+    firstLoopTime = millis();
+  }
+  // deep sleep for 30 minutes if more than 30 seconds has passed since the first loop
+  if(millis() - firstLoopTime > millis() + 30000) {
+    Serial.println("Going to sleep for 30 minutes");
+    ESP.deepSleep(1800000000);
+  }
+
 
 }
