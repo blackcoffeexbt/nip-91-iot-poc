@@ -31,6 +31,7 @@
 
 Adafruit_BMP280 bmp; // I2C
 
+uint8_t sleepInterval = 15; // sleep for 15 minutes between recordings
 
 #define PARAM_FILE "/elements.json"
 
@@ -301,9 +302,8 @@ void loop() {
   }
   // deep sleep for 30 minutes if more than 30 seconds has passed since the first loop
   if(millis() - firstLoopTime > millis() + 30000) {
-    Serial.println("Going to sleep for 30 minutes");
-    ESP.deepSleep(1800000000);
+    Serial.println("Going to sleep for " + String(sleepInterval) + " minutes");
+    ESP.deepSleep(sleepInterval * 60 * 1000000);
   }
-
 
 }
