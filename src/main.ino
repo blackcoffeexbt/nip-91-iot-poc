@@ -22,6 +22,15 @@
 
 #include "sensor.h"
 
+#include <Adafruit_BMP280.h>
+
+#define BMP_SCK  (13)
+#define BMP_MISO (12)
+#define BMP_MOSI (11)
+#define BMP_CS   (10)
+
+Adafruit_BMP280 bmp; // I2C
+
 
 #define PARAM_FILE "/elements.json"
 
@@ -177,6 +186,25 @@ void setup() {
   Serial.begin(115200);
   Serial.println("boot");
 
+  unsigned status;
+  status = bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID);
+    if (!status) {
+    Serial.println(F("Could not find a valid BMP280 sensor, check wiring or "
+                      "try a different address!"));
+    Serial.print("SensorID was: 0x"); Serial.println(bmp.sensorID(),16);
+    Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
+    Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
+    Serial.print("        ID of 0x60 represents a BME 280.\n");
+    Serial.print("        ID of 0x61 represents a BME 680.\n");
+    while (1) delay(10);
+  }
+
+  /* Default settings from datasheet. */
+  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
+                  Adafruit_BMP280::SAMPLING_X2,     /* Temp. oversampling */
+                  Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */
+                  Adafruit_BMP280::FILTER_X16,      /* Filtering. */
+                  Adafruit_BMP280::STANDBY_MS_500); /* Standby time. */
   
   FlashFS.begin(FORMAT_ON_FAIL);
   // init spiffs
@@ -205,7 +233,8 @@ void setup() {
 
   // get the sensor data, create the event and push it to the queue
   unsigned long timestamp = getUnixTimestamp();
-  float temperature = simulateTemperature(timestamp);
+  float temperature = bmp.readTemperature();
+  Serial.println("Temperature: " + String(temperature) + "°C");
 
   StaticJsonDocument<512> tagsDoc;
   JsonArray tags = tagsDoc.to<JsonArray>();
@@ -221,11 +250,26 @@ void setup() {
   altTag.add("Temperature is " + String(temperature) + "°C");
 
   String noteString = nostr.getNote(nsecHex, npubHex, timestamp, String(temperature), 8003, tags);
-  // String noteString = nostr.getNote(nsecHex, npubHex, timestamp, "TESTING BACKWARDS COMPATIBILITY");
   nostrRelayManager.enqueueMessage(noteString.c_str());
 
-  // enqueue it
-  nostrQueue.enqueue(noteString.c_str());
+  float pressure = bmp.readPressure() / 100.0F;
+  Serial.println("pressure: " + String(pressure) + "hPa");
+
+  StaticJsonDocument<512> pressureTagsDoc;
+  JsonArray pressureTags = pressureTagsDoc.to<JsonArray>();
+
+  // Add device tag
+  JsonArray pressureDeviceTag = pressureTags.createNestedArray();
+  pressureDeviceTag.add("device");
+  pressureDeviceTag.add("1337107");
+
+  // Add alt tag
+  JsonArray pressureAltTag = pressureTags.createNestedArray();
+  pressureAltTag.add("alt");
+  pressureAltTag.add("Pressure is " + String(pressure) + "hPa");
+
+  noteString = nostr.getNote(nsecHex, npubHex, timestamp, String(pressure), 8004, pressureTags);
+  nostrRelayManager.enqueueMessage(noteString.c_str());
 }
 
 long lastInternetConnectionCheckTime = 0;
